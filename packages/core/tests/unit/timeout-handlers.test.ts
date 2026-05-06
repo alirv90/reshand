@@ -801,7 +801,7 @@ describe("No-timeout success paths", () => {
 
     const extractInferenceMock = vi.mocked(extractInference);
     extractInferenceMock.mockResolvedValue({
-      title: "Test Title",
+      extraction: { extraction: "Test Title" },
       metadata: { completed: true, progress: "100%" },
       prompt_tokens: 200,
       completion_tokens: 100,
@@ -831,7 +831,7 @@ describe("No-timeout success paths", () => {
       // No timeout specified
     });
 
-    expect(result).toHaveProperty("title", "Test Title");
+    expect(result).toHaveProperty("extraction", "Test Title");
     expect(metricsCallback).toHaveBeenCalledWith(
       V3FunctionName.EXTRACT,
       200,

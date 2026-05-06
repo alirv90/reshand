@@ -505,6 +505,11 @@ export const ExtractOptionsSchema = z
       description: "CSS selector to scope extraction to a specific element",
       example: "#main-content",
     }),
+    useCache: z.boolean().optional().meta({
+      description:
+        "When false, skips local extract disk cache (replay / playbook storage)",
+      example: true,
+    }),
   })
   .optional()
   .meta({ id: "ExtractOptions" });
