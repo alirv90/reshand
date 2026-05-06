@@ -92,6 +92,7 @@ import { StagehandAPIClient } from "./api.js";
 import { validateExperimentalFeatures } from "./agent/utils/validateExperimentalFeatures.js";
 import { flattenVariables } from "./agent/utils/variables.js";
 import type { ExtractPlaybookNode } from "./cache/extractPlaybook.js";
+import { FlowLogger, type FlowLoggerContext } from "./flowlogger/FlowLogger.js";
 import { EventEmitterWithWildcardSupport } from "./flowlogger/EventEmitter.js";
 import { EventStore } from "./flowlogger/EventStore.js";
 import { createTimeoutGuard } from "./handlers/handlerUtils/timeoutGuard.js";
