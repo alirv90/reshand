@@ -1,5 +1,14 @@
 # @browserbasehq/stagehand-server-v3
 
+## 3.6.4
+
+### Patch Changes
+
+- [#2040](https://github.com/browserbase/stagehand/pull/2040) [`1fa9613`](https://github.com/browserbase/stagehand/commit/1fa96130abbee2197a4e7f208878d06cba10c70b) Thanks [@monadoid](https://github.com/monadoid)! - Prefer `STAGEHAND_API_URL` for Stagehand API overrides while retaining `STAGEHAND_BASE_URL` as a deprecated fallback.
+
+- Updated dependencies [[`f437f73`](https://github.com/browserbase/stagehand/commit/f437f738d23951cf460a30d3d285d1eba4c78ea2), [`a87c1fc`](https://github.com/browserbase/stagehand/commit/a87c1fc435be83dbf14eab9edc6c421454ef7be4), [`1fa9613`](https://github.com/browserbase/stagehand/commit/1fa96130abbee2197a4e7f208878d06cba10c70b), [`9ff70dd`](https://github.com/browserbase/stagehand/commit/9ff70dd26cf4e03dce00ddcdc2d3b5e8d116781c)]:
+  - @browserbasehq/stagehand@3.3.1
+
 ## 3.6.3
 
 ### Patch Changes
