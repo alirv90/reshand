@@ -1,11 +1,12 @@
 // lib/v3/handlers/extractHandler.ts
-import { extract as runExtract } from "../../inference.js";
+import { extract as runExtract, type ExtractInferenceResult } from "../../inference.js";
 import {
   getZFactory,
   getZodType,
   injectUrls,
   transformSchema,
 } from "../../utils.js";
+import { extractPlaybookNodeSchema } from "../cache/extractPlaybook.js";
 import { v3Logger } from "../logger.js";
 import { V3FunctionName } from "../types/public/methods.js";
 import { captureHybridSnapshot } from "../understudy/a11y/snapshot/index.js";
@@ -49,18 +50,6 @@ export function transformUrlStringsToNumericIds<T extends StagehandZodSchema>(
   const [finalSchema, urlPaths] = transformSchema(schema, []);
   return [finalSchema, urlPaths];
 }
-
-interface ExtractionResponseBase {
-  metadata: { completed: boolean };
-  prompt_tokens: number;
-  completion_tokens: number;
-  reasoning_tokens: number;
-  cached_input_tokens?: number;
-  inference_time_ms: number;
-}
-
-type ExtractionResponse<T extends StagehandZodObject> = ExtractionResponseBase &
-  InferStagehandSchema<T>;
 
 export class ExtractHandler {
   private readonly llmClient: LLMClient;
@@ -109,7 +98,16 @@ export class ExtractHandler {
   async extract<T extends StagehandZodSchema>(
     params: ExtractHandlerParams<T>,
   ): Promise<InferStagehandSchema<T> | { pageText: string }> {
-    const { instruction, schema, page, selector, timeout, model } = params;
+    const {
+      instruction,
+      schema,
+      page,
+      selector,
+      timeout,
+      model,
+      requestPlaybook,
+      onPlaybook,
+    } = params;
 
     const llmClient = this.resolveLlmClient(model);
 
@@ -175,7 +173,7 @@ export class ExtractHandler {
       transformUrlStringsToNumericIds(objectSchema);
 
     ensureTimeRemaining();
-    const extractionResponse: ExtractionResponse<StagehandZodObject> =
+    const inferenceResult: ExtractInferenceResult<StagehandZodObject> =
       await runExtract<StagehandZodObject>({
         instruction,
         domElements: combinedTree,
@@ -184,18 +182,37 @@ export class ExtractHandler {
         userProvidedInstructions: this.systemPrompt,
         logger: v3Logger,
         logInferenceToFile: this.logInferenceToFile,
+        includePlaybook: !!requestPlaybook,
       });
 
     const {
+      extraction: extractedBody,
+      playbook: playbookRaw,
       metadata: { completed },
       prompt_tokens,
       completion_tokens,
       reasoning_tokens = 0,
       cached_input_tokens = 0,
       inference_time_ms,
-      ...rest
-    } = extractionResponse;
-    let output = rest as InferStagehandSchema<StagehandZodObject>;
+    } = inferenceResult;
+
+    if (requestPlaybook && onPlaybook && playbookRaw) {
+      const parsedPlaybook = extractPlaybookNodeSchema.safeParse(playbookRaw);
+      if (parsedPlaybook.success) {
+        onPlaybook(parsedPlaybook.data);
+      } else {
+        v3Logger({
+          category: "cache",
+          message: "extract playbook from LLM failed validation — not caching",
+          level: 1,
+          auxiliary: {
+            error: { value: parsedPlaybook.error.message, type: "string" },
+          },
+        });
+      }
+    }
+
+    let output = extractedBody as InferStagehandSchema<StagehandZodObject>;
 
     // Update EXTRACT metrics from the LLM calls
     this.onMetrics?.(

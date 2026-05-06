@@ -124,6 +124,11 @@ export class DeepLocatorDelegate {
     return base.nth(this.nthIndex);
   }
 
+  /** Resolved Locator for this delegate (honors nth index). Used for attribute reads and advanced compose flows. */
+  async resolvedLocator(): Promise<Locator> {
+    return this.real();
+  }
+
   // Locator API delegates
   async click(options?: {
     button?: "left" | "right" | "middle";

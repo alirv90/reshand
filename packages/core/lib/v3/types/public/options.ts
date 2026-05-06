@@ -57,7 +57,7 @@ export interface V3Options {
   disablePino?: boolean;
   /** Optional external logger hook for integrating with host apps. */
   logger?: (line: LogLine) => void;
-  /** Directory used to persist cached actions for act(). */
+  /** Directory used to persist cached actions for act() and extract playbooks for extract(). */
   cacheDir?: string;
   domSettleTimeout?: number;
   disableAPI?: boolean;

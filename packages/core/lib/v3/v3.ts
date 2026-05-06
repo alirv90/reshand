@@ -1,5 +1,6 @@
 import type { LanguageModelV2Middleware } from "@ai-sdk/provider";
 import fs from "fs";
+import { createHash } from "crypto";
 import os from "os";
 import path from "path";
 import process from "process";
@@ -16,6 +17,7 @@ import { StagehandLogger, LoggerOptions } from "../logger.js";
 import { ActCache } from "./cache/ActCache.js";
 import { AgentCache } from "./cache/AgentCache.js";
 import { CacheStorage } from "./cache/CacheStorage.js";
+import { ExtractCache } from "./cache/ExtractCache.js";
 import { ActHandler } from "./handlers/actHandler.js";
 import { ExtractHandler } from "./handlers/extractHandler.js";
 import { ObserveHandler } from "./handlers/observeHandler.js";
@@ -34,13 +36,14 @@ import {
 import { cleanupLocalBrowser } from "./shutdown/cleanupLocal.js";
 import { startShutdownSupervisor } from "./shutdown/supervisorClient.js";
 import { resolveTools } from "./mcp/utils.js";
-import {
+import type {
   ActHandlerParams,
   ExtractHandlerParams,
   ObserveHandlerParams,
   AgentReplayStep,
   InitState,
   AgentCacheContext,
+  ExtractCacheContext,
 } from "./types/private/index.js";
 import type {
   ShutdownSupervisorConfig,
@@ -88,7 +91,7 @@ import { resolveModel } from "../modelUtils.js";
 import { StagehandAPIClient } from "./api.js";
 import { validateExperimentalFeatures } from "./agent/utils/validateExperimentalFeatures.js";
 import { flattenVariables } from "./agent/utils/variables.js";
-import { FlowLogger, type FlowLoggerContext } from "./flowlogger/FlowLogger.js";
+import type { ExtractPlaybookNode } from "./cache/extractPlaybook.js";
 import { EventEmitterWithWildcardSupport } from "./flowlogger/EventEmitter.js";
 import { EventStore } from "./flowlogger/EventStore.js";
 import { createTimeoutGuard } from "./handlers/handlerUtils/timeoutGuard.js";
@@ -268,6 +271,7 @@ export class V3 {
   private static _instances: Set<V3> = new Set();
   private cacheStorage: CacheStorage;
   private actCache: ActCache;
+  private extractCache: ExtractCache;
   private agentCache: AgentCache;
   private apiClient: StagehandAPIClient | null = null;
   private keepAlive?: boolean;
@@ -395,6 +399,11 @@ export class V3 {
       logger: this.logger,
       getActHandler: () => this.actHandler,
       getDefaultLlmClient: () => this.resolveLlmClient(),
+      domSettleTimeoutMs: this.domSettleTimeoutMs,
+    });
+    this.extractCache = new ExtractCache({
+      storage: this.cacheStorage,
+      logger: this.logger,
       domSettleTimeoutMs: this.domSettleTimeoutMs,
     });
     this.agentCache = new AgentCache({
@@ -1371,6 +1380,11 @@ export class V3 {
    * - extract(instruction) → defaultExtractSchema
    * - extract(instruction, schema) → schema-inferred
    * - extract(instruction, schema, options)
+   *
+   * When the constructor `cacheDir` option is set (and not using the API client), repeated
+   * calls with the same instruction, URL, schema shape, and options first try a
+   * deterministic replay from a cached DOM playbook; on failure they fall back to
+   * the LLM and refresh the cache. Pass `{ useCache: false }` in options to skip.
    */
 
   async extract(): Promise<z.infer<typeof pageTextSchema>>;
@@ -1436,6 +1450,57 @@ export class V3 {
       // Resolve page from options or use active page
       const page = await this.resolvePage(options?.page);
 
+      const historySchemaDescriptor = effectiveSchema
+        ? toJsonSchema(effectiveSchema)
+        : undefined;
+
+      const useExtractCache =
+        Boolean(instruction) &&
+        !this.apiClient &&
+        this.extractCache.enabled &&
+        options?.useCache !== false;
+
+      let extractCacheContext: ExtractCacheContext | null = null;
+      let capturedPlaybook: ExtractPlaybookNode | null = null;
+
+      if (
+        instruction &&
+        effectiveSchema &&
+        useExtractCache &&
+        !this.apiClient
+      ) {
+        extractCacheContext = await this.extractCache.prepareContext({
+          instruction,
+          page,
+          schemaFingerprint:
+            this.fingerprintExtractSchema(effectiveSchema),
+          selector: options?.selector,
+          variables: flattenVariables(options?.variables),
+        });
+        if (extractCacheContext) {
+          const cached = await this.extractCache.tryReplay(
+            extractCacheContext,
+            page,
+            effectiveSchema as StagehandZodSchema,
+            options?.timeout,
+          );
+          if (cached !== null) {
+            this.addToHistory(
+              "extract",
+              {
+                instruction,
+                selector: options?.selector,
+                timeout: options?.timeout,
+                schema: historySchemaDescriptor,
+                cacheHit: true,
+              },
+              cached,
+            );
+            return cached;
+          }
+        }
+      }
+
       const handlerParams: ExtractHandlerParams<StagehandZodSchema> = {
         instruction,
         schema: effectiveSchema as StagehandZodSchema | undefined,
@@ -1443,6 +1508,10 @@ export class V3 {
         timeout: options?.timeout,
         selector: options?.selector,
         page,
+        requestPlaybook: !!(instruction && useExtractCache),
+        onPlaybook: (pb) => {
+          capturedPlaybook = pb;
+        },
       };
       let result: z.infer<typeof effectiveSchema> | { pageText: string };
       if (this.apiClient) {
@@ -1457,9 +1526,24 @@ export class V3 {
         result =
           await this.extractHandler.extract<StagehandZodSchema>(handlerParams);
       }
-      const historySchemaDescriptor = effectiveSchema
-        ? toJsonSchema(effectiveSchema)
-        : undefined;
+
+      if (
+        extractCacheContext &&
+        capturedPlaybook &&
+        useExtractCache &&
+        instruction
+      ) {
+        await this.extractCache.store(extractCacheContext, {
+          instruction: extractCacheContext.instruction,
+          url: extractCacheContext.pageUrl,
+          schemaFingerprint: extractCacheContext.schemaFingerprint,
+          selectorKey: extractCacheContext.selectorKey,
+          variableKeys: extractCacheContext.variableKeys,
+          playbook: capturedPlaybook,
+          schemaDescriptor: historySchemaDescriptor,
+        });
+      }
+
       this.addToHistory(
         "extract",
         {
@@ -1467,6 +1551,7 @@ export class V3 {
           selector: options?.selector,
           timeout: options?.timeout,
           schema: historySchemaDescriptor,
+          cacheHit: false,
         },
         result,
       );
@@ -1753,6 +1838,18 @@ export class V3 {
       p !== null &&
       typeof (p as PuppeteerPage).target === "function"
     );
+  }
+
+  /** Stable fingerprint for extract disk cache keys (schema shape). */
+  private fingerprintExtractSchema(schema?: StagehandZodSchema): string {
+    if (!schema) {
+      return createHash("sha256")
+        .update("stagehand:page-text-extract")
+        .digest("hex");
+    }
+    return createHash("sha256")
+      .update(JSON.stringify(toJsonSchema(schema)))
+      .digest("hex");
   }
 
   /** Resolve an external page reference or fall back to the active V3 page. */
