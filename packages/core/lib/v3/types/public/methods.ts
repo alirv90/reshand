@@ -61,6 +61,11 @@ export interface ExtractOptions {
    * When false, disables server-side caching.
    */
   serverCache?: boolean;
+  /**
+   * When false, skips extract disk cache (replay + storing playbook).
+   * Requires `cacheDir` on the Stagehand / V3 constructor for caching to apply.
+   */
+  useCache?: boolean;
 }
 
 export const defaultExtractSchema = z.object({

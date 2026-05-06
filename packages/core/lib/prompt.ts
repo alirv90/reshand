@@ -21,6 +21,7 @@ ${userProvidedInstructions}`;
 export function buildExtractSystemPrompt(
   isUsingPrintExtractedDataTool: boolean = false,
   userProvidedInstructions?: string,
+  requestPlaybook?: boolean,
 ): ChatMessage {
   const baseContent = `You are extracting content on behalf of a user.
   If a user asks you to extract a 'list' of information, or 'all' information, 
@@ -52,10 +53,22 @@ ONLY print the content using the print_extracted_data tool provided.
     userProvidedInstructions,
   );
 
+  const playbookInstructions = requestPlaybook
+    ? `
+You must also fill the "playbook" field: a declarative DOM replay plan whose shape mirrors the extraction output.
+Use nodes of type "field" for primitives (selector + read mode). Use type "object" with a "fields" map for nested objects.
+Use type "array" with itemsSelector matching every repeated row/card and an "item" subtree for one element; inside array item field selectors, use the literal substring {index} for the 1-based item index (for example xpath=(//article)[{index}]//h2).
+Selectors may be CSS, xpath=..., or text=.... Prefer stable selectors (roles, data attributes). Use read "attr:href" for links when the schema expects URLs.
+Set deep true only when the node is inside iframe or shadow DOM.
+`.trim()
+    : "";
+
   const content =
     `${baseContent}${contentDetail}\n\n${instructions}\n${toolInstructions}${
       additionalInstructions ? `\n\n${additionalInstructions}` : ""
-    }${userInstructions ? `\n\n${userInstructions}` : ""}`.replace(/\s+/g, " ");
+    }${playbookInstructions ? `\n\n${playbookInstructions}` : ""}${
+      userInstructions ? `\n\n${userInstructions}` : ""
+    }`.replace(/\s+/g, " ");
 
   return {
     role: "system",

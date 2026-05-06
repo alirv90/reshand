@@ -9,6 +9,7 @@ import type {
 } from "../public/index.js";
 import { CacheStorage } from "../../cache/CacheStorage.js";
 import type { ActHandler } from "../../handlers/actHandler.js";
+import type { ExtractPlaybookNode } from "../../cache/extractPlaybook.js";
 import type { V3Context } from "../../understudy/context.js";
 import type { LLMClient } from "../../llm/LLMClient.js";
 
@@ -61,6 +62,33 @@ export type ActCacheDeps = {
   getDefaultLlmClient: () => LLMClient;
   domSettleTimeoutMs?: number;
 };
+
+export type ExtractCacheContext = {
+  instruction: string;
+  cacheKey: string;
+  pageUrl: string;
+  schemaFingerprint: string;
+  selectorKey: string;
+  variableKeys: string[];
+};
+
+export type ExtractCacheDeps = {
+  storage: CacheStorage;
+  logger: Logger;
+  domSettleTimeoutMs?: number;
+};
+
+export interface CachedExtractEntry {
+  version: 1;
+  instruction: string;
+  url: string;
+  schemaFingerprint: string;
+  selectorKey: string;
+  variableKeys: string[];
+  playbook: ExtractPlaybookNode;
+  /** Serialized schema hint for debugging only; replay validates against live schema. */
+  schemaDescriptor?: unknown;
+}
 
 export type ReadJsonResult<T> = {
   value: T | null;

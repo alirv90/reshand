@@ -12,10 +12,13 @@ import {
   buildObserveUserMessage,
 } from "./prompt.js";
 import { appendSummary, writeTimestampedTxtFile } from "./inferenceLogUtils.js";
+import { getZFactory } from "./utils.js";
+import { extractPlaybookNodeSchema } from "./v3/cache/extractPlaybook.js";
 import type {
   InferStagehandSchema,
   StagehandZodObject,
 } from "./v3/zodCompat.js";
+import type { ExtractPlaybookNode } from "./v3/cache/extractPlaybook.js";
 import { SupportedUnderstudyAction } from "./v3/types/private/handlers.js";
 import type { Variables } from "./v3/types/public/agent.js";
 
@@ -30,6 +33,20 @@ function withLlmTimeout<T>(promise: Promise<T>, operation: string): Promise<T> {
   );
 }
 
+export type ExtractInferenceResult<T extends StagehandZodObject> = {
+  extraction: InferStagehandSchema<T>;
+  playbook?: ExtractPlaybookNode;
+  metadata: {
+    completed: boolean;
+    progress: string;
+  };
+  prompt_tokens: number;
+  completion_tokens: number;
+  reasoning_tokens: number;
+  cached_input_tokens: number;
+  inference_time_ms: number;
+};
+
 export async function extract<T extends StagehandZodObject>({
   instruction,
   domElements,
@@ -38,6 +55,7 @@ export async function extract<T extends StagehandZodObject>({
   logger,
   userProvidedInstructions,
   logInferenceToFile = false,
+  includePlaybook = false,
 }: {
   instruction: string;
   domElements: string;
@@ -46,7 +64,9 @@ export async function extract<T extends StagehandZodObject>({
   userProvidedInstructions?: string;
   logger: (message: LogLine) => void;
   logInferenceToFile?: boolean;
-}) {
+  /** When true, structured output includes extraction + playbook for DOM replay. */
+  includePlaybook?: boolean;
+}): Promise<ExtractInferenceResult<T>> {
   const metadataSchema = z.object({
     progress: z
       .string()
@@ -60,14 +80,32 @@ export async function extract<T extends StagehandZodObject>({
       ),
   });
 
-  type ExtractionResponse = InferStagehandSchema<T>;
   type MetadataResponse = z.infer<typeof metadataSchema>;
 
   const isUsingAnthropic = llmClient.type === "anthropic";
   const isGPT5 = llmClient.modelName.includes("gpt-5"); // TODO: remove this as we update support for gpt-5 configuration options
 
+  const factory = getZFactory(schema);
+  const responseSchema = includePlaybook
+    ? factory.object({
+        extraction: schema,
+        playbook: extractPlaybookNodeSchema,
+      })
+    : schema;
+
+  type ExtractionCallPayload =
+    | InferStagehandSchema<T>
+    | {
+        extraction: InferStagehandSchema<T>;
+        playbook: ExtractPlaybookNode;
+      };
+
   const extractCallMessages: ChatMessage[] = [
-    buildExtractSystemPrompt(isUsingAnthropic, userProvidedInstructions),
+    buildExtractSystemPrompt(
+      isUsingAnthropic,
+      userProvidedInstructions,
+      includePlaybook,
+    ),
     buildExtractUserPrompt(instruction, domElements, isUsingAnthropic),
   ];
 
@@ -88,11 +126,11 @@ export async function extract<T extends StagehandZodObject>({
 
   const extractStartTime = Date.now();
   const extractionResponse = await withLlmTimeout(
-    llmClient.createChatCompletion<ExtractionResponse>({
+    llmClient.createChatCompletion<ExtractionCallPayload>({
       options: {
         messages: extractCallMessages,
         response_model: {
-          schema,
+          schema: responseSchema,
           name: "Extraction",
         },
         temperature: isGPT5 ? 1 : 0.1,
@@ -106,7 +144,21 @@ export async function extract<T extends StagehandZodObject>({
   );
   const extractEndTime = Date.now();
 
-  const { data: extractedData, usage: extractUsage } = extractionResponse;
+  const { data: extractionCallData, usage: extractUsage } = extractionResponse;
+
+  let extractedData: InferStagehandSchema<T>;
+  let playbookFromLlm: ExtractPlaybookNode | undefined;
+
+  if (includePlaybook) {
+    const bundle = extractionCallData as {
+      extraction: InferStagehandSchema<T>;
+      playbook: ExtractPlaybookNode;
+    };
+    extractedData = bundle.extraction;
+    playbookFromLlm = bundle.playbook;
+  } else {
+    extractedData = extractionCallData as InferStagehandSchema<T>;
+  }
 
   let extractResponseFile: string;
   if (logInferenceToFile) {
@@ -135,7 +187,7 @@ export async function extract<T extends StagehandZodObject>({
 
   const metadataCallMessages: ChatMessage[] = [
     buildMetadataSystemPrompt(),
-    buildMetadataPrompt(instruction, extractedData),
+    buildMetadataPrompt(instruction, extractedData as object),
   ];
 
   let metadataCallFile = "";
@@ -225,7 +277,8 @@ export async function extract<T extends StagehandZodObject>({
     (metadataResponseUsage?.cached_input_tokens ?? 0);
 
   return {
-    ...extractedData,
+    extraction: extractedData,
+    playbook: includePlaybook ? playbookFromLlm : undefined,
     metadata: {
       completed: metadataResponseCompleted,
       progress: metadataResponseProgress,
