@@ -34,17 +34,18 @@ const crypto = require("crypto");
 
 const PLAYBOOK_GUIDE = [
   "ALSO populate a 'playbook' field: a tree mirroring the data shape that tells",
-  "how to read each value from the live DOM.",
-  '- Leaves: { "type": "field", "selector": "<selector>",',
-  '    "read": "innerText"|"textContent"|"inputValue"|"innerHtml"|"attr:<name>" }.',
-  "  Selector forms: raw CSS (e.g. `h1`, `div.row > a`), `xpath=...`, or",
-  "  `text=...`. Do NOT prefix CSS with `css:` or `css=`.",
-  '  Use "deep": true only when the element is inside an iframe or shadow DOM.',
-  '- Objects: { "type": "object", "fields": { "<key>": <node>, ... } }.',
-  '- Arrays: { "type": "array", "itemsSelector": "<css matching every row>",',
-  '    "item": <node> }; inside array items, use the literal "{index}" in',
-  "  selectors for the 1-based row index (e.g. xpath=(//article)[{index}]//h2).",
-  'Prefer stable selectors. Use read "attr:href" for URL fields.',
+  "how to read each value from the live DOM (raw CSS selectors only).",
+  '- Leaf:  {"type":"field","selector":"<css>","read":"innerText"|"textContent"|"inputValue"|"innerHtml"|"attr:<name>"}.',
+  "  For <title>, use selector `title` with read `textContent`.",
+  '  Set "deep":true only inside iframe or shadow DOM.',
+  '- Object:{"type":"object","fields":{"<key>":<node>,...}}.',
+  '- Array: {"type":"array","itemsSelector":"<row css>","item":<node>}.',
+  "  Inside an array's item, leaf selectors are evaluated as",
+  "  `row.querySelector(selector)`. Use class/attr-based selectors RELATIVE",
+  "  to the row (`.text`, `.author`, `a`). Never repeat the row tag",
+  '  (`li:nth-child(N)`) and never use `{index}`. Use empty `""` to read the',
+  "  row itself.",
+  'Use read "attr:href" for URL fields.',
 ].join("\n");
 
 function sha256Hex(value) {
@@ -92,29 +93,23 @@ function isPlaybookNode(n) {
   return false;
 }
 
-function applyIndexPlaceholder(selector, index1Based) {
-  if (index1Based == null || !selector.includes("{index}")) return selector;
-  return selector.split("{index}").join(String(index1Based));
-}
-
 /** LLMs sometimes emit `css:foo` / `css=foo`; Stagehand expects raw CSS. */
 function normalizeSelector(selector) {
   return selector.replace(/^css[:=]\s*/i, "");
 }
 
-/** CDP-backed attribute read for Stagehand Locator (no native getAttribute). */
-async function readAttributeViaCdp(loc, attrName) {
-  const frame = loc.getFrame();
-  const session = frame.session;
+/** CDP `Runtime.callFunctionOn` on an element resolved from a Locator. */
+async function callOnElement(loc, fnDecl, args) {
+  const session = loc.getFrame().session;
   const { objectId } = await loc.resolveNode();
   try {
     const res = await session.send("Runtime.callFunctionOn", {
       objectId,
-      functionDeclaration: 'function(a){return this.getAttribute(a) ?? "";}',
-      arguments: [{ value: attrName }],
+      functionDeclaration: fnDecl,
+      arguments: args.map((value) => ({ value })),
       returnByValue: true,
     });
-    return String(res?.result?.value ?? "");
+    return res?.result?.value;
   } finally {
     try {
       await session.send("Runtime.releaseObject", { objectId });
@@ -124,15 +119,51 @@ async function readAttributeViaCdp(loc, attrName) {
   }
 }
 
+const TRIM = (s) => (s == null ? "" : String(s)).trim();
+
+/** Read a leaf value from a top-level (non-scoped) Stagehand Locator. */
 async function readLeaf(loc, read) {
-  const trim = (s) => (s == null ? "" : String(s)).trim();
   if (read.startsWith("attr:")) {
-    return trim(await readAttributeViaCdp(loc, read.slice(5)));
+    const v = await callOnElement(
+      loc,
+      'function(a){return this.getAttribute(a) ?? "";}',
+      [read.slice(5)],
+    );
+    return TRIM(v);
   }
-  if (read === "textContent") return trim(await loc.textContent());
-  if (read === "inputValue") return trim(await loc.inputValue());
-  if (read === "innerHtml") return trim(await loc.innerHtml());
-  return trim(await loc.innerText());
+  if (read === "textContent") return TRIM(await loc.textContent());
+  if (read === "inputValue") return TRIM(await loc.inputValue());
+  if (read === "innerHtml") return TRIM(await loc.innerHtml());
+  // innerText (default): empty for elements not rendered (e.g. <title> in <head>);
+  // fall back to textContent so unrendered nodes still yield text.
+  const it = TRIM(await loc.innerText());
+  return it !== "" ? it : TRIM(await loc.textContent());
+}
+
+/** Read a leaf value from a child of `itemLoc`, scoped via this.querySelector. */
+async function readScopedLeaf(itemLoc, childSelector, read) {
+  const sel = normalizeSelector(childSelector);
+  if (read.startsWith("attr:")) {
+    const v = await callOnElement(
+      itemLoc,
+      'function(s,a){const el=s===""?this:this.querySelector(s);return el?(el.getAttribute(a)??""):"";}',
+      [sel, read.slice(5)],
+    );
+    return TRIM(v);
+  }
+  const fnByRead = {
+    textContent:
+      'function(s){const el=s===""?this:this.querySelector(s);return el?(el.textContent??""):"";}',
+    inputValue:
+      'function(s){const el=s===""?this:this.querySelector(s);return el?(el.value??""):"";}',
+    innerHtml:
+      'function(s){const el=s===""?this:this.querySelector(s);return el?(el.innerHTML??""):"";}',
+    innerText:
+      'function(s){const el=s===""?this:this.querySelector(s);return el?(el.innerText||el.textContent||""):"";}',
+  };
+  const decl = fnByRead[read] ?? fnByRead.innerText;
+  const v = await callOnElement(itemLoc, decl, [sel]);
+  return TRIM(v);
 }
 
 async function resolveLocator(page, selector, deep) {
@@ -148,11 +179,15 @@ async function resolveLocator(page, selector, deep) {
 }
 
 async function executePlaybook(page, root) {
-  const exec = async (node, index1Based) => {
+  // `scope` is null at top level (read via page.locator) or a Stagehand Locator
+  // narrowed to an array item (read via CDP this.querySelector).
+  const exec = async (node, scope) => {
     if (node.type === "field") {
-      const sel = applyIndexPlaceholder(node.selector, index1Based);
       try {
-        const loc = await resolveLocator(page, sel, !!node.deep);
+        if (scope) {
+          return await readScopedLeaf(scope, node.selector, node.read);
+        }
+        const loc = await resolveLocator(page, node.selector, !!node.deep);
         return await readLeaf(loc, node.read);
       } catch {
         return null;
@@ -161,10 +196,11 @@ async function executePlaybook(page, root) {
     if (node.type === "object") {
       const out = {};
       for (const [key, child] of Object.entries(node.fields)) {
-        out[key] = await exec(child, index1Based);
+        out[key] = await exec(child, scope);
       }
       return out;
     }
+    // type === "array": scope each row to the i-th item locator.
     const items = await resolveLocator(
       page,
       node.itemsSelector,
@@ -172,7 +208,10 @@ async function executePlaybook(page, root) {
     );
     const n = await items.count();
     const results = [];
-    for (let i = 0; i < n; i++) results.push(await exec(node.item, i + 1));
+    for (let i = 0; i < n; i++) {
+      const itemLoc = typeof items.nth === "function" ? items.nth(i) : items;
+      results.push(await exec(node.item, itemLoc));
+    }
     return results;
   };
   return exec(root, null);
