@@ -30,6 +30,7 @@ coverage/
 ctrf/
 .stagehand-sea/
 packages/core/stagehand-deepseek-extract-cache/
+packages/core/stagehand-deepseek-extract-cache-list/
 .playwright*/
 **/.playwright*/
 packages/evals/playwright-mcp-screenshot-*.png
