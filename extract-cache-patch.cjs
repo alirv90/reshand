@@ -3,9 +3,12 @@
  * Runtime patch enabling a disk-backed playbook cache for
  * @browserbasehq/stagehand `extract()` without modifying node_modules.
  *
+ * Targets Stagehand V3's own Page/Locator (CDP-backed). No Playwright
+ * dependency.
+ *
  * Usage:
  *   const { Stagehand } = require("@browserbasehq/stagehand");
- *   const { applyExtractCachePatch } = require("./extract-cache-patch.js");
+ *   const { applyExtractCachePatch } = require("./extract-cache-patch.cjs");
  *   applyExtractCachePatch(Stagehand, { cacheDir: "./stagehand-extract-cache" });
  *
  *   const sh = new Stagehand({ env: "LOCAL", model: "deepseek/deepseek-chat" });
@@ -15,13 +18,14 @@
  *   // Pass options.useCache=false to bypass.
  *
  * Mechanism:
- *   - On miss, calls original extract() with the user's instruction augmented
- *     with a playbook guide and the user's schema wrapped as
- *     z.object({ data: <user>, playbook: z.any() }). The model returns both
- *     in one call. We persist `playbook` and return `data`.
+ *   - On miss, calls the original extract() with the user's instruction
+ *     augmented with a playbook guide and the user's schema wrapped as
+ *     z.object({ data: <user>, playbook: z.any() }). The LLM returns both in
+ *     one call; we persist `playbook` and return `data`.
  *   - On hit, walks the cached playbook against the live page using
- *     Playwright locators and validates the output with the user's schema.
- *     Validation failure or any walker error → falls back to LLM.
+ *     Stagehand's Locator API (`.innerText/.textContent/.inputValue/
+ *     .innerHtml/.count`) and CDP for attributes; validates the output with
+ *     the user's Zod schema. Validation failure / walker error → LLM fallback.
  */
 
 const fs = require("fs");
@@ -30,7 +34,7 @@ const crypto = require("crypto");
 
 const PLAYBOOK_GUIDE = [
   "ALSO populate a 'playbook' field: a tree mirroring the data shape that tells",
-  "how to read each value from the live DOM with Playwright selectors.",
+  "how to read each value from the live DOM with selectors.",
   '- Leaves: { "type": "field", "selector": "<css|xpath=...|text=...>",',
   '    "read": "innerText"|"textContent"|"inputValue"|"innerHtml"|"attr:<name>" }.',
   '  Use "deep": true only when the element is inside an iframe or shadow DOM.',
@@ -91,14 +95,48 @@ function applyIndexPlaceholder(selector, index1Based) {
   return selector.split("{index}").join(String(index1Based));
 }
 
+/** CDP-backed attribute read for Stagehand Locator (no native getAttribute). */
+async function readAttributeViaCdp(loc, attrName) {
+  const frame = loc.getFrame();
+  const session = frame.session;
+  const { objectId } = await loc.resolveNode();
+  try {
+    const res = await session.send("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: 'function(a){return this.getAttribute(a) ?? "";}',
+      arguments: [{ value: attrName }],
+      returnByValue: true,
+    });
+    return String(res?.result?.value ?? "");
+  } finally {
+    try {
+      await session.send("Runtime.releaseObject", { objectId });
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
 async function readLeaf(loc, read) {
   const trim = (s) => (s == null ? "" : String(s)).trim();
-  if (read.startsWith("attr:"))
-    return trim(await loc.getAttribute(read.slice(5)));
+  if (read.startsWith("attr:")) {
+    return trim(await readAttributeViaCdp(loc, read.slice(5)));
+  }
   if (read === "textContent") return trim(await loc.textContent());
   if (read === "inputValue") return trim(await loc.inputValue());
-  if (read === "innerHtml") return trim(await loc.innerHTML());
+  if (read === "innerHtml") return trim(await loc.innerHtml());
   return trim(await loc.innerText());
+}
+
+async function resolveLocator(page, selector, deep) {
+  if (deep && typeof page.deepLocator === "function") {
+    const del = page.deepLocator(selector);
+    if (typeof del.resolvedLocator === "function") {
+      return await del.resolvedLocator();
+    }
+    return del;
+  }
+  return page.locator(selector);
 }
 
 async function executePlaybook(page, root) {
@@ -106,7 +144,8 @@ async function executePlaybook(page, root) {
     if (node.type === "field") {
       const sel = applyIndexPlaceholder(node.selector, index1Based);
       try {
-        return await readLeaf(page.locator(sel).first(), node.read);
+        const loc = await resolveLocator(page, sel, !!node.deep);
+        return await readLeaf(loc, node.read);
       } catch {
         return null;
       }
@@ -118,7 +157,11 @@ async function executePlaybook(page, root) {
       }
       return out;
     }
-    const items = page.locator(node.itemsSelector);
+    const items = await resolveLocator(
+      page,
+      node.itemsSelector,
+      !!node.itemsDeep,
+    );
     const n = await items.count();
     const results = [];
     for (let i = 0; i < n; i++) results.push(await exec(node.item, i + 1));
@@ -145,6 +188,15 @@ function pickPage(stagehand, options) {
   }
 }
 
+function readPageUrl(page) {
+  try {
+    const u = page.url();
+    return typeof u === "string" ? u : "";
+  } catch {
+    return "";
+  }
+}
+
 function applyExtractCachePatch(Stagehand, opts = {}) {
   const cacheDir = path.resolve(opts.cacheDir ?? "stagehand-extract-cache");
   fs.mkdirSync(cacheDir, { recursive: true });
@@ -167,13 +219,7 @@ function applyExtractCachePatch(Stagehand, opts = {}) {
     if (!page) return original.apply(this, args);
 
     const z = require("zod");
-    const url = (() => {
-      try {
-        return page.url();
-      } catch {
-        return "";
-      }
-    })();
+    const url = readPageUrl(page);
     const schemaFp = fingerprintSchema(schema);
     const cacheKey = sha256Hex({
       kind: "stagehand-extract-runtime-patch-v1",
