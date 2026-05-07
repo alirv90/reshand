@@ -28,14 +28,14 @@ async function example() {
     env: "LOCAL",
     verbose: 1,
     model: {
-      modelName: "deepseek/deepseek-chat",
+      modelName: process.env.DEEPSEEK_MODEL ?? "deepseek/deepseek-v4-flash",
       apiKey: process.env.DEEPSEEK_API_KEY,
     },
     localBrowserLaunchOptions: {
       executablePath,
       headless: true,
       viewport: { width: 1280, height: 800 },
-      args: ["--no-sandbox"],
+      args: ["--no-sandbox", "--ignore-certificate-errors"],
     },
   });
 
@@ -52,7 +52,6 @@ async function example() {
           title: z.string().describe("The title of the story"),
           points: z.number().describe("Number of points the story has"),
           author: z.string().describe("Username of the submitter"),
-          url: z.string().url().describe("Link to the story"),
         }),
       ),
     }),
