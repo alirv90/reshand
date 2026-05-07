@@ -61,6 +61,7 @@ import {
   ActOptions,
   ActResult,
   defaultExtractSchema,
+  ExtractByJsOptions,
   ExtractOptions,
   HistoryEntry,
   ObserveOptions,
@@ -1471,6 +1472,112 @@ export class V3 {
         result,
       );
       return result;
+    });
+  }
+
+  /**
+   * Run a user-provided JavaScript snippet inside the page and return its
+   * result, validated against the given schema.
+   *
+   * This is the deterministic counterpart to {@link extract}: callers control
+   * exactly how data is read from the DOM, so the operation does not consume
+   * any LLM tokens on the happy path. When the script throws or its return
+   * value does not satisfy the schema, the optional
+   * {@link ExtractByJsOptions.instruction} enables a one-shot self-heal that
+   * delegates to the LLM-backed {@link extract}.
+   */
+  async extractByJs(
+    script: string,
+    options?: ExtractByJsOptions,
+  ): Promise<z.infer<typeof defaultExtractSchema>>;
+  async extractByJs<T extends StagehandZodSchema>(
+    script: string,
+    schema: T,
+    options?: ExtractByJsOptions,
+  ): Promise<InferStagehandSchema<T>>;
+
+  @FlowLogger.wrapWithLogging({
+    eventType: "StagehandExtractByJs",
+  })
+  async extractByJs(
+    script: string,
+    b?: StagehandZodSchema | ExtractByJsOptions,
+    c?: ExtractByJsOptions,
+  ): Promise<unknown> {
+    return await withInstanceLogContext(this.instanceId, async () => {
+      if (typeof script !== "string" || !script.trim()) {
+        throw new StagehandInvalidArgumentError(
+          "extractByJs(): script must be a non-empty string",
+        );
+      }
+
+      const isZodSchema = (val: unknown): val is StagehandZodSchema =>
+        !!val &&
+        typeof val === "object" &&
+        "parse" in val &&
+        "safeParse" in val;
+
+      let schema: StagehandZodSchema;
+      let options: ExtractByJsOptions | undefined;
+      if (isZodSchema(b)) {
+        schema = b;
+        options = c;
+      } else {
+        schema = defaultExtractSchema;
+        options = b as ExtractByJsOptions | undefined;
+      }
+
+      const page = await this.resolvePage(options?.page);
+
+      let primaryError: unknown;
+      try {
+        const raw = await page.evaluate(script);
+        const parsed = schema.safeParse(raw);
+        if (!parsed.success) {
+          throw new StagehandInvalidArgumentError(
+            `extractByJs(): schema validation failed: ${parsed.error.message}`,
+          );
+        }
+        this.addToHistory(
+          "extract",
+          { script, viaExtractByJs: true, scriptOk: true },
+          parsed.data,
+        );
+        return parsed.data;
+      } catch (err) {
+        primaryError = err;
+      }
+
+      if (options?.instruction) {
+        this.logger({
+          category: "extract",
+          message:
+            "extractByJs self-heal: script failed, falling back to LLM extract",
+          level: 1,
+          auxiliary: {
+            error: {
+              value:
+                primaryError instanceof Error
+                  ? primaryError.message
+                  : String(primaryError),
+              type: "string",
+            },
+          },
+        });
+        const fallback = await this.extract(options.instruction, schema, {
+          page: options.page,
+          timeout: options.timeout,
+          model: options.model,
+        });
+        this.addToHistory(
+          "extract",
+          { script, viaExtractByJs: true, selfHealed: true },
+          fallback,
+        );
+        return fallback;
+      }
+
+      throw primaryError;
     });
   }
 

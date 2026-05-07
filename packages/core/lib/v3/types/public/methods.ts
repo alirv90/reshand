@@ -63,6 +63,23 @@ export interface ExtractOptions {
   serverCache?: boolean;
 }
 
+export interface ExtractByJsOptions {
+  page?: PlaywrightPage | PuppeteerPage | PatchrightPage | Page;
+  timeout?: number;
+  /**
+   * Fallback instruction for self-healing. When the JS script throws or
+   * its return value fails schema validation, extractByJs will transparently
+   * call extract(instruction, schema, { page, timeout, model }) to recover.
+   * Without this field, failures bubble up to the caller.
+   */
+  instruction?: string;
+  /**
+   * Optional model override forwarded to the LLM-based extract fallback.
+   * Ignored when `instruction` is not set.
+   */
+  model?: ModelConfiguration;
+}
+
 export const defaultExtractSchema = z.object({
   extraction: z.string(),
 });
