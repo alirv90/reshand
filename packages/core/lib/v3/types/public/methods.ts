@@ -52,6 +52,7 @@ export interface HistoryEntry {
 
 export interface ExtractOptions {
   model?: ModelConfiguration;
+  variables?: Variables;
   timeout?: number;
   selector?: string;
   page?: PlaywrightPage | PuppeteerPage | PatchrightPage | Page;
