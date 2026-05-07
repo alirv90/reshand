@@ -1,10 +1,7 @@
 // lib/v3/cache/extractPlaybook.ts
 import { Protocol } from "devtools-protocol";
 import { z } from "zod";
-import {
-  DeepLocatorDelegate,
-  resolveLocatorWithHops,
-} from "../understudy/deepLocator.js";
+import { resolveLocatorWithHops } from "../understudy/deepLocator.js";
 import { Locator } from "../understudy/locator.js";
 import type { Page } from "../understudy/page.js";
 import { withTimeout } from "../timeoutConfig.js";
@@ -119,21 +116,6 @@ async function readFieldLeaf(loc: Locator, read: string): Promise<string> {
   return (await loc.innerText()).trim();
 }
 
-async function readDeepLeaf(
-  del: DeepLocatorDelegate,
-  read: string,
-): Promise<string> {
-  if (read.startsWith("attr:")) {
-    const loc = await del.resolvedLocator();
-    return (await readAttribute(loc, read.slice(5))).trim();
-  }
-  if (read === "innerText") return (await del.innerText()).trim();
-  if (read === "textContent") return (await del.textContent()).trim();
-  if (read === "inputValue") return (await del.inputValue()).trim();
-  if (read === "innerHtml") return (await del.innerHtml()).trim();
-  return (await del.innerText()).trim();
-}
-
 /**
  * Expands {index} placeholders in a selector. Only applies when `index1Based` is set.
  */
@@ -155,14 +137,14 @@ async function readFieldNode(
 ): Promise<unknown> {
   const rawSelector = applyIndexPlaceholder(node.selector, index1Based);
   const label = `extract cache read (${rawSelector})`;
-  if (node.deep) {
-    const del = page.deepLocator(rawSelector);
-    const op = readDeepLeaf(del, node.read);
-    return await withTimeout(op, perReadTimeoutMs, label);
-  }
-  const loc = page.locator(rawSelector);
-  const op = readFieldLeaf(loc, node.read);
-  return await withTimeout(op, perReadTimeoutMs, label);
+  const loc = node.deep
+    ? await page.deepLocator(rawSelector).resolvedLocator()
+    : page.locator(rawSelector);
+  return await withTimeout(
+    readFieldLeaf(loc, node.read),
+    perReadTimeoutMs,
+    label,
+  );
 }
 
 /**

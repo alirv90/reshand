@@ -9,7 +9,6 @@ import {
   injectUrls,
   transformSchema,
 } from "../../utils.js";
-import { extractPlaybookNodeSchema } from "../cache/extractPlaybook.js";
 import { v3Logger } from "../logger.js";
 import { V3FunctionName } from "../types/public/methods.js";
 import { captureHybridSnapshot } from "../understudy/a11y/snapshot/index.js";
@@ -190,7 +189,7 @@ export class ExtractHandler {
 
     const {
       extraction: extractedBody,
-      playbook: playbookRaw,
+      playbook,
       metadata: { completed },
       prompt_tokens,
       completion_tokens,
@@ -199,20 +198,8 @@ export class ExtractHandler {
       inference_time_ms,
     } = inferenceResult;
 
-    if (requestPlaybook && onPlaybook && playbookRaw) {
-      const parsedPlaybook = extractPlaybookNodeSchema.safeParse(playbookRaw);
-      if (parsedPlaybook.success) {
-        onPlaybook(parsedPlaybook.data);
-      } else {
-        v3Logger({
-          category: "cache",
-          message: "extract playbook from LLM failed validation — not caching",
-          level: 1,
-          auxiliary: {
-            error: { value: parsedPlaybook.error.message, type: "string" },
-          },
-        });
-      }
+    if (requestPlaybook && onPlaybook && playbook) {
+      onPlaybook(playbook);
     }
 
     let output = extractedBody as InferStagehandSchema<StagehandZodObject>;

@@ -86,8 +86,6 @@ export interface CachedExtractEntry {
   selectorKey: string;
   variableKeys: string[];
   playbook: ExtractPlaybookNode;
-  /** Serialized schema hint for debugging only; replay validates against live schema. */
-  schemaDescriptor?: unknown;
 }
 
 export type ReadJsonResult<T> = {

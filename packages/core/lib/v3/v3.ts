@@ -1464,12 +1464,7 @@ export class V3 {
       let extractCacheContext: ExtractCacheContext | null = null;
       let capturedPlaybook: ExtractPlaybookNode | null = null;
 
-      if (
-        instruction &&
-        effectiveSchema &&
-        useExtractCache &&
-        !this.apiClient
-      ) {
+      if (effectiveSchema && useExtractCache) {
         extractCacheContext = await this.extractCache.prepareContext({
           instruction,
           page,
@@ -1508,7 +1503,7 @@ export class V3 {
         timeout: options?.timeout,
         selector: options?.selector,
         page,
-        requestPlaybook: !!(instruction && useExtractCache),
+        requestPlaybook: useExtractCache,
         onPlaybook: (pb) => {
           capturedPlaybook = pb;
         },
@@ -1527,12 +1522,7 @@ export class V3 {
           await this.extractHandler.extract<StagehandZodSchema>(handlerParams);
       }
 
-      if (
-        extractCacheContext &&
-        capturedPlaybook &&
-        useExtractCache &&
-        instruction
-      ) {
+      if (extractCacheContext && capturedPlaybook) {
         await this.extractCache.store(extractCacheContext, {
           instruction: extractCacheContext.instruction,
           url: extractCacheContext.pageUrl,
@@ -1540,7 +1530,6 @@ export class V3 {
           selectorKey: extractCacheContext.selectorKey,
           variableKeys: extractCacheContext.variableKeys,
           playbook: capturedPlaybook,
-          schemaDescriptor: historySchemaDescriptor,
         });
       }
 
@@ -1841,12 +1830,7 @@ export class V3 {
   }
 
   /** Stable fingerprint for extract disk cache keys (schema shape). */
-  private fingerprintExtractSchema(schema?: StagehandZodSchema): string {
-    if (!schema) {
-      return createHash("sha256")
-        .update("stagehand:page-text-extract")
-        .digest("hex");
-    }
+  private fingerprintExtractSchema(schema: StagehandZodSchema): string {
     return createHash("sha256")
       .update(JSON.stringify(toJsonSchema(schema)))
       .digest("hex");

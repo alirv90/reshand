@@ -39,12 +39,7 @@ export class ExtractCache {
   }): Promise<ExtractCacheContext | null> {
     if (!this.enabled) return null;
     const sanitizedInstruction = params.instruction.trim();
-    const sanitizedVariables = params.variables
-      ? { ...params.variables }
-      : undefined;
-    const variableKeys = sanitizedVariables
-      ? Object.keys(sanitizedVariables).sort()
-      : [];
+    const variableKeys = Object.keys(params.variables ?? {}).sort();
     const pageUrl = await safeGetPageUrl(params.page);
     const selectorKey = params.selector?.trim() ?? "";
     const cacheKey = this.buildExtractCacheKey({
