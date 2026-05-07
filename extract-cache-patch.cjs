@@ -34,9 +34,11 @@ const crypto = require("crypto");
 
 const PLAYBOOK_GUIDE = [
   "ALSO populate a 'playbook' field: a tree mirroring the data shape that tells",
-  "how to read each value from the live DOM with selectors.",
-  '- Leaves: { "type": "field", "selector": "<css|xpath=...|text=...>",',
+  "how to read each value from the live DOM.",
+  '- Leaves: { "type": "field", "selector": "<selector>",',
   '    "read": "innerText"|"textContent"|"inputValue"|"innerHtml"|"attr:<name>" }.',
+  "  Selector forms: raw CSS (e.g. `h1`, `div.row > a`), `xpath=...`, or",
+  "  `text=...`. Do NOT prefix CSS with `css:` or `css=`.",
   '  Use "deep": true only when the element is inside an iframe or shadow DOM.',
   '- Objects: { "type": "object", "fields": { "<key>": <node>, ... } }.',
   '- Arrays: { "type": "array", "itemsSelector": "<css matching every row>",',
@@ -95,6 +97,11 @@ function applyIndexPlaceholder(selector, index1Based) {
   return selector.split("{index}").join(String(index1Based));
 }
 
+/** LLMs sometimes emit `css:foo` / `css=foo`; Stagehand expects raw CSS. */
+function normalizeSelector(selector) {
+  return selector.replace(/^css[:=]\s*/i, "");
+}
+
 /** CDP-backed attribute read for Stagehand Locator (no native getAttribute). */
 async function readAttributeViaCdp(loc, attrName) {
   const frame = loc.getFrame();
@@ -129,14 +136,15 @@ async function readLeaf(loc, read) {
 }
 
 async function resolveLocator(page, selector, deep) {
+  const sel = normalizeSelector(selector);
   if (deep && typeof page.deepLocator === "function") {
-    const del = page.deepLocator(selector);
+    const del = page.deepLocator(sel);
     if (typeof del.resolvedLocator === "function") {
       return await del.resolvedLocator();
     }
     return del;
   }
-  return page.locator(selector);
+  return page.locator(sel);
 }
 
 async function executePlaybook(page, root) {
