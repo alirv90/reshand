@@ -1,5 +1,38 @@
+import fs from "fs";
+import path from "path";
 import { Stagehand } from "../lib/v3/index.js";
 import { z } from "zod";
+
+/** Same string passed to `cacheDir` — extract entries are `extract-<hash>.json` here. */
+const CACHE_DIR = "stagehand-deepseek-extract-cache";
+
+function printExtractCacheOnDisk(): void {
+  const abs = path.resolve(process.cwd(), CACHE_DIR);
+  console.log("\n--- On-disk extract cache ---");
+  console.log("Directory (resolved):", abs);
+  if (!fs.existsSync(abs)) {
+    console.log("(directory does not exist yet)");
+    return;
+  }
+  const names = fs
+    .readdirSync(abs)
+    .filter((n) => n.startsWith("extract-") && n.endsWith(".json"))
+    .sort();
+  if (names.length === 0) {
+    console.log("(no extract-*.json files)");
+    return;
+  }
+  for (const name of names) {
+    const fp = path.join(abs, name);
+    const raw = fs.readFileSync(fp, "utf8");
+    console.log("\n---", name, "---");
+    try {
+      console.log(JSON.stringify(JSON.parse(raw), null, 2));
+    } catch {
+      console.log(raw.slice(0, 4000));
+    }
+  }
+}
 
 /**
  * DeepSeek with V3 `extract()` disk cache (playbook replay).
@@ -17,6 +50,9 @@ import { z } from "zod";
  * for a non-default binary (same as GitHub Actions).
  *
  * From `packages/core`: `pnpm example deepseek-extract-cache`
+ *
+ * After both extracts, the script prints the `extract-*.json` cache files
+ * (instruction, URL, schema fingerprint, stored playbook).
  */
 function relaxedLocalChrome(): boolean {
   const v = process.env.STAGEHAND_CONTAINER?.trim().toLowerCase();
@@ -48,7 +84,7 @@ async function runExtract(stagehand: Stagehand) {
     env: "LOCAL",
     verbose: 2,
     model: "deepseek/deepseek-chat",
-    cacheDir: "stagehand-deepseek-extract-cache",
+    cacheDir: CACHE_DIR,
     ...(container
       ? {
           localBrowserLaunchOptions: {
@@ -74,6 +110,8 @@ async function runExtract(stagehand: Stagehand) {
   console.log("--- Second extract (playbook replay when possible) ---");
   const second = await runExtract(stagehand);
   console.log("second run:", second);
+
+  printExtractCacheOnDisk();
 
   await stagehand.close();
 })();
