@@ -37,7 +37,9 @@ const PLAYBOOK_GUIDE = [
   "how to read each value from the live DOM (raw CSS selectors only).",
   '- Leaf:  {"type":"field","selector":"<css>","read":"innerText"|"textContent"|"inputValue"|"innerHtml"|"attr:<name>"}.',
   "  For <title>, use selector `title` with read `textContent`.",
-  '  Set "deep":true only inside iframe or shadow DOM.',
+  '  Set "deep":true AND prefix the selector with the iframe-piercing hop',
+  "  notation `<iframe css> >> <inner css>` when the element is inside an",
+  "  iframe (e.g. `iframe#frame1 >> h1.inner`).",
   '- Object:{"type":"object","fields":{"<key>":<node>,...}}.',
   '- Array: {"type":"array","itemsSelector":"<row css>","item":<node>}.',
   "  Inside an array's item, leaf selectors are evaluated as",
@@ -244,6 +246,26 @@ function readPageUrl(page) {
   }
 }
 
+/** LLM providers (e.g. DeepSeek) intermittently return ELB 5xx; retry once. */
+async function runAugmentedWithRetry(stagehand, original, augmented, options) {
+  try {
+    return await original.call(
+      stagehand,
+      augmented.instruction,
+      augmented.schema,
+      options,
+    );
+  } catch (e) {
+    await new Promise((r) => setTimeout(r, 1500));
+    return await original.call(
+      stagehand,
+      augmented.instruction,
+      augmented.schema,
+      options,
+    );
+  }
+}
+
 function applyExtractCachePatch(Stagehand, opts = {}) {
   const cacheDir = path.resolve(opts.cacheDir ?? "stagehand-extract-cache");
   fs.mkdirSync(cacheDir, { recursive: true });
@@ -296,12 +318,7 @@ function applyExtractCachePatch(Stagehand, opts = {}) {
     const augmented = buildAugmented(z, instruction, schema);
     let bundle;
     try {
-      bundle = await original.call(
-        this,
-        augmented.instruction,
-        augmented.schema,
-        options,
-      );
+      bundle = await runAugmentedWithRetry(this, original, augmented, options);
     } catch (e) {
       log("extract failed under augmentation, retrying raw", {
         error: String(e),
