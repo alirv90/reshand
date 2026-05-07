@@ -505,6 +505,9 @@ export const ExtractOptionsSchema = z
       description: "CSS selector to scope extraction to a specific element",
       example: "#main-content",
     }),
+    variables: z.record(z.string(), z.string()).optional().meta({
+      description: "Template variable values for this extract call",
+    }),
     useCache: z.boolean().optional().meta({
       description:
         "When false, skips local extract disk cache (replay / playbook storage)",
