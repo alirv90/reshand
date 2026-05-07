@@ -1473,8 +1473,7 @@ export class V3 {
         extractCacheContext = await this.extractCache.prepareContext({
           instruction,
           page,
-          schemaFingerprint:
-            this.fingerprintExtractSchema(effectiveSchema),
+          schemaFingerprint: this.fingerprintExtractSchema(effectiveSchema),
           selector: options?.selector,
           variables: flattenVariables(options?.variables),
         });

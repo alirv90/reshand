@@ -1,5 +1,8 @@
 // lib/v3/handlers/extractHandler.ts
-import { extract as runExtract, type ExtractInferenceResult } from "../../inference.js";
+import {
+  extract as runExtract,
+  type ExtractInferenceResult,
+} from "../../inference.js";
 import {
   getZFactory,
   getZodType,

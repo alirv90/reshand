@@ -9,6 +9,7 @@ import { getV3DynamicTestConfig } from "./v3.dynamic.config.js";
 
 const CORRUPT_SELECTOR = "#__stagehand_extract_cache_corrupt__";
 
+// eslint-disable-next-line no-empty-pattern
 test("extract disk cache: corrupt playbook forces LLM fallback and refreshes cache", async ({}, testInfo) => {
   test.skip(
     !process.env.OPENAI_API_KEY,

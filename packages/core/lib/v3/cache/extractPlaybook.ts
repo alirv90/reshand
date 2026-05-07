@@ -82,10 +82,7 @@ export const extractPlaybookNodeSchema: z.ZodType<ExtractPlaybookNode> = z.lazy(
     ]),
 ) as z.ZodType<ExtractPlaybookNode>;
 
-async function readAttribute(
-  loc: Locator,
-  attrName: string,
-): Promise<string> {
+async function readAttribute(loc: Locator, attrName: string): Promise<string> {
   const session = loc.getFrame().session;
   const { objectId } = await loc.resolveNode();
   try {
@@ -104,10 +101,7 @@ async function readAttribute(
   }
 }
 
-async function readFieldLeaf(
-  loc: Locator,
-  read: string,
-): Promise<string> {
+async function readFieldLeaf(loc: Locator, read: string): Promise<string> {
   if (read.startsWith("attr:")) {
     return (await readAttribute(loc, read.slice(5))).trim();
   }
@@ -125,7 +119,10 @@ async function readFieldLeaf(
   return (await loc.innerText()).trim();
 }
 
-async function readDeepLeaf(del: DeepLocatorDelegate, read: string): Promise<string> {
+async function readDeepLeaf(
+  del: DeepLocatorDelegate,
+  read: string,
+): Promise<string> {
   if (read.startsWith("attr:")) {
     const loc = await del.resolvedLocator();
     return (await readAttribute(loc, read.slice(5))).trim();

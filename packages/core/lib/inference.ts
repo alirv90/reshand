@@ -90,7 +90,7 @@ export async function extract<T extends StagehandZodObject>({
   const playbookWireSchema = factory
     .any()
     .describe(
-      "Declarative DOM replay playbook: mirror the extraction shape using type \"field\" (selector + read), type \"object\" ({ fields }), or type \"array\" ({ itemsSelector, item }). Use {index} in selectors inside array items.",
+      'Declarative DOM replay playbook: mirror the extraction shape using type "field" (selector + read), type "object" ({ fields }), or type "array" ({ itemsSelector, item }). Use {index} in selectors inside array items.',
     );
   const responseSchema = includePlaybook
     ? factory.object({
