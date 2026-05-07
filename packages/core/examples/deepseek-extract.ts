@@ -8,12 +8,20 @@ import { z } from "zod";
  * Prerequisites:
  *   1. Install Playwright's bundled Chromium:
  *        npx playwright install chromium
- *   2. Set your DeepSeek API key:
+ *   2. Configure the Chromium executable path and DeepSeek key in your shell:
  *        export DEEPSEEK_API_KEY=sk-...
+ *        # Optional: pin a specific Chromium binary. If unset, the path is
+ *        # resolved from the playwright package via chromium.executablePath().
+ *        export CHROMIUM_EXECUTABLE_PATH="$(npx playwright install --dry-run chromium | awk '/Install location/ {print $3}')/chrome-linux/chrome"
+ *        # Or override Playwright's browser cache directory:
+ *        export PLAYWRIGHT_BROWSERS_PATH=/path/to/ms-playwright
  *
  * Run from the repo root:
  *   pnpm --filter @browserbasehq/stagehand exec tsx examples/deepseek-extract.ts
  */
+
+const executablePath =
+  process.env.CHROMIUM_EXECUTABLE_PATH ?? chromium.executablePath();
 
 async function example() {
   const stagehand = new Stagehand({
@@ -24,7 +32,7 @@ async function example() {
       apiKey: process.env.DEEPSEEK_API_KEY,
     },
     localBrowserLaunchOptions: {
-      executablePath: chromium.executablePath(),
+      executablePath,
       headless: false,
       viewport: { width: 1280, height: 800 },
     },
