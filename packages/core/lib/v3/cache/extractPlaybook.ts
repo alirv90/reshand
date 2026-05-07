@@ -64,7 +64,7 @@ export const extractPlaybookNodeSchema: z.ZodType<ExtractPlaybookNode> = z.lazy(
       z.object({
         type: z.literal("object"),
         fields: z
-          .record(extractPlaybookNodeSchema)
+          .record(z.string(), extractPlaybookNodeSchema)
           .describe("Child playbook nodes keyed like the output object."),
       }),
       z.object({
