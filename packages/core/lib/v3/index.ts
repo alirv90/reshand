@@ -24,9 +24,15 @@ import { tool } from "ai";
 import { getAISDKLanguageModel } from "./llm/LLMProvider.js";
 import { __internalCreateInMemoryAgentCacheHandle } from "./cache/serverAgentCache.js";
 import { maybeRunShutdownSupervisorFromArgv } from "./shutdown/supervisor.js";
+import { extractByJsCache, buildExtractByJsCacheKey } from "./extractByJsCache.js";
 
 export { V3 } from "./v3.js";
 export { V3 as Stagehand } from "./v3.js";
+export {
+  extractByJsCache,
+  buildExtractByJsCacheKey,
+} from "./extractByJsCache.js";
+export type { ExtractByJsCacheOptions } from "./extractByJsCache.js";
 
 export * from "./types/public/index.js";
 export { AnnotatedScreenshotText, LLMClient } from "./llm/LLMClient.js";
@@ -90,6 +96,8 @@ const StagehandDefault = {
   ...PublicApi,
   V3,
   Stagehand: V3,
+  extractByJsCache,
+  buildExtractByJsCacheKey,
   AnnotatedScreenshotText,
   LLMClient,
   AgentProvider,

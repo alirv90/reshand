@@ -150,10 +150,12 @@ describe("Stagehand public API types", () => {
   describe("ExtractOptions", () => {
     type ExpectedExtractOptions = {
       model?: Stagehand.ModelConfiguration;
+      variables?: Stagehand.Variables;
       timeout?: number;
       selector?: string;
       page?: Stagehand.AnyPage;
       serverCache?: boolean;
+      useCache?: boolean;
     };
 
     it("matches expected type shape", () => {
