@@ -86,10 +86,16 @@ export async function extract<T extends StagehandZodObject>({
   const isGPT5 = llmClient.modelName.includes("gpt-5"); // TODO: remove this as we update support for gpt-5 configuration options
 
   const factory = getZFactory(schema);
+  /** Lazy recursive playbook schema breaks AI SDK / Zod JSON-Schema export; wire as any then validate. */
+  const playbookWireSchema = factory
+    .any()
+    .describe(
+      "Declarative DOM replay playbook: mirror the extraction shape using type \"field\" (selector + read), type \"object\" ({ fields }), or type \"array\" ({ itemsSelector, item }). Use {index} in selectors inside array items.",
+    );
   const responseSchema = includePlaybook
     ? factory.object({
         extraction: schema,
-        playbook: extractPlaybookNodeSchema,
+        playbook: playbookWireSchema,
       })
     : schema;
 
@@ -152,10 +158,11 @@ export async function extract<T extends StagehandZodObject>({
   if (includePlaybook) {
     const bundle = extractionCallData as {
       extraction: InferStagehandSchema<T>;
-      playbook: ExtractPlaybookNode;
+      playbook: unknown;
     };
     extractedData = bundle.extraction;
-    playbookFromLlm = bundle.playbook;
+    const parsed = extractPlaybookNodeSchema.safeParse(bundle.playbook);
+    playbookFromLlm = parsed.success ? parsed.data : undefined;
   } else {
     extractedData = extractionCallData as InferStagehandSchema<T>;
   }
